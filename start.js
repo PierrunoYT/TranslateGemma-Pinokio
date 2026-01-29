@@ -11,7 +11,7 @@ module.exports = {
         ],
         on: [{
           // Monitor for Gradio server URL output
-          "event": "/http:\\/\\/(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0):\\d{2,5}/",
+          "event": "/http:\\/\\/(?:localhost|127\\.0\\.0\\.1):\\d{2,5}/",
           "done": true
         }]
       }

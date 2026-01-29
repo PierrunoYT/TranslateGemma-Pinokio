@@ -271,7 +271,7 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
 
 
 # Create Gradio interface
-with gr.Blocks(title="TranslateGemma - Multilingual Translation", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
     gr.Markdown(
         """
         # 🌍 TranslateGemma - AI Translation
@@ -476,8 +476,9 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation", theme=gr.theme
 
 if __name__ == "__main__":
     demo.launch(
-        server_name="0.0.0.0",
+        server_name="127.0.0.1",
         server_port=7860,
         share=False,
-        show_error=True
+        show_error=True,
+        theme=gr.themes.Soft()
     )
