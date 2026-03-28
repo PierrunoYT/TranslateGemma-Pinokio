@@ -3,7 +3,7 @@ module.exports = {
   version: "5.0",
   title: "TranslateGemma",
   description: "🌍 TranslateGemma - Google's open-source multilingual translation AI. Translate text across 55+ languages and extract/translate text from images. Powered by Gemma 3 architecture.",
-  icon: "icon.png",
+  icon: "icon.jpg",
   menu: async (kernel, info) => {
     let installed = info.exists("env")
     let running = {
