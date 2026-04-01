@@ -5,7 +5,8 @@ module.exports = {
       method: "shell.run",
       params: {
         venv: "env",
-        message: "pip install -r requirements.txt"
+        path: "app",
+        message: "uv pip install -r requirements.txt"
       }
     },
     // Install PyTorch with CUDA support after other requirements
@@ -15,6 +16,7 @@ module.exports = {
         uri: "torch.js",
         params: {
           venv: "env",
+          path: "app",
           xformers: false,
           flashattn: false,
           triton: false

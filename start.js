@@ -6,12 +6,13 @@ module.exports = {
       method: "shell.run",
       params: {
         venv: "env",
+        path: "app",
         message: [
           "python app.py"
         ],
         on: [{
           // Monitor for Gradio server URL output
-          "event": "/http:\\/\\/(?:localhost|127\\.0\\.0\\.1):\\d{2,5}/",
+          "event": "/(http:\\/\\/\\S+)/",
           "done": true
         }]
       }
@@ -20,7 +21,7 @@ module.exports = {
     {
       method: "local.set",
       params: {
-        url: "{{input.event[0]}}"
+        url: "{{input.event[1]}}"
       }
     },
     {
@@ -31,4 +32,3 @@ module.exports = {
     }
   ]
 }
-
