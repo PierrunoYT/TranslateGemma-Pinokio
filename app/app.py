@@ -1,6 +1,6 @@
 import gradio as gr
 import torch
-from transformers import AutoModelForImageTextToText, AutoProcessor, pipeline
+from transformers import AutoModelForImageTextToText, AutoProcessor, pipeline, GenerationConfig
 from PIL import Image
 import os
 import requests
@@ -176,8 +176,9 @@ def translate_text(text, source_lang, target_lang, max_tokens=200):
     ]
     
     try:
+        gen_config = GenerationConfig(max_new_tokens=max_tokens, pad_token_id=1)
         if pipe is not None:
-            output = pipe(text=messages, max_new_tokens=max_tokens)
+            output = pipe(text=messages, generation_config=gen_config)
             return output[0]["generated_text"][-1]["content"]
         else:
             inputs = processor.apply_chat_template(
@@ -187,14 +188,14 @@ def translate_text(text, source_lang, target_lang, max_tokens=200):
                 return_dict=True,
                 return_tensors="pt"
             ).to(model.device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32)
-            
+
             input_len = len(inputs['input_ids'][0])
-            
+
             with torch.inference_mode():
-                generation = model.generate(**inputs, do_sample=False, max_new_tokens=max_tokens)
+                generation = model.generate(**inputs, generation_config=gen_config, do_sample=False)
                 generation = generation[0][input_len:]
                 decoded = processor.decode(generation, skip_special_tokens=True)
-            
+
             return decoded
     except Exception as e:
         return f"❌ Translation error: {str(e)}"
@@ -242,8 +243,9 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
             }
         ]
         
+        gen_config = GenerationConfig(max_new_tokens=max_tokens, pad_token_id=1)
         if pipe is not None:
-            output = pipe(text=messages, max_new_tokens=max_tokens)
+            output = pipe(text=messages, generation_config=gen_config)
             result = output[0]["generated_text"][-1]["content"]
         else:
             inputs = processor.apply_chat_template(
@@ -253,11 +255,11 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
                 return_dict=True,
                 return_tensors="pt"
             ).to(model.device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32)
-            
+
             input_len = len(inputs['input_ids'][0])
-            
+
             with torch.inference_mode():
-                generation = model.generate(**inputs, do_sample=False, max_new_tokens=max_tokens)
+                generation = model.generate(**inputs, generation_config=gen_config, do_sample=False)
                 generation = generation[0][input_len:]
                 result = processor.decode(generation, skip_special_tokens=True)
         
