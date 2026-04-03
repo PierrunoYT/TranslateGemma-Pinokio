@@ -11,9 +11,9 @@ module.exports = {
           "python app.py"
         ],
         on: [{
-          // Monitor for Gradio server URL output
-          "event": "/(http:\\/\\/\\S+)/",
-          "done": true
+          // Capture server URL (Gepeto / mochi pattern); app uses server_name 127.0.0.1 in app.py
+          event: "/(http:\\/\\/[0-9.:]+)/",
+          done: true
         }]
       }
     },
