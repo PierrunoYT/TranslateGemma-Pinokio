@@ -3,6 +3,7 @@ import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, pipeline, GenerationConfig
 from PIL import Image
 import os
+import tempfile
 import requests
 from io import BytesIO
 from huggingface_hub import login
@@ -95,19 +96,11 @@ def set_hf_token(token):
 def load_model(model_size="12B", use_pipeline=True):
     """Load the TranslateGemma model"""
     global model, processor, pipe, current_model_size, hf_token_set
-    
-    # Check if token is set (or if already logged in via CLI)
-    if not hf_token_set:
-        try:
-            # Try to load without explicit token (in case user logged in via CLI)
-            pass
-        except:
-            pass
-    
+
     # If already loaded and same size, skip
     if current_model_size == model_size and (pipe is not None or model is not None):
         return f"Model {model_size} already loaded ✓"
-    
+
     # Clear existing model
     if model is not None:
         del model
@@ -117,8 +110,9 @@ def load_model(model_size="12B", use_pipeline=True):
     if pipe is not None:
         del pipe
         pipe = None
-    
-    torch.cuda.empty_cache()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     
     model_id = f"google/translategemma-{model_size.lower()}-it"
     
@@ -214,12 +208,14 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
     source_code = LANGUAGES.get(source_lang, "en")
     target_code = LANGUAGES.get(target_lang, "es")
     
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".jpg")
+    os.close(temp_fd)
     try:
         # Save image temporarily
-        temp_path = "temp_image.jpg"
         if isinstance(image, str):
             # If image is a URL
-            response = requests.get(image)
+            response = requests.get(image, timeout=30)
+            response.raise_for_status()
             img = Image.open(BytesIO(response.content))
             img.save(temp_path)
         else:
@@ -227,7 +223,7 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
             if not isinstance(image, Image.Image):
                 image = Image.fromarray(image)
             image.save(temp_path)
-        
+
         # Create URL-like path for the image
         messages = [
             {
@@ -242,7 +238,7 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
                 ]
             }
         ]
-        
+
         gen_config = GenerationConfig(max_new_tokens=max_tokens, pad_token_id=1)
         if pipe is not None:
             output = pipe(text=messages, generation_config=gen_config)
@@ -262,14 +258,13 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
                 generation = model.generate(**inputs, generation_config=gen_config, do_sample=False)
                 generation = generation[0][input_len:]
                 result = processor.decode(generation, skip_special_tokens=True)
-        
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        
+
         return result
     except Exception as e:
         return f"❌ Image translation error: {str(e)}"
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 # Create Gradio interface
