@@ -2,8 +2,10 @@ import gradio as gr
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, pipeline, GenerationConfig
 from PIL import Image
+import gc
 import os
 import tempfile
+import threading
 import requests
 from io import BytesIO
 from huggingface_hub import login
@@ -13,7 +15,10 @@ model = None
 processor = None
 pipe = None
 current_model_size = None
-hf_token_set = False
+
+# Serializes model (un)loading and inference: the globals above are shared by
+# every request handler, and Gradio runs those on a thread pool.
+model_lock = threading.Lock()
 
 # Supported languages mapping (55 main languages)
 LANGUAGES = {
@@ -80,81 +85,112 @@ LANGUAGES = {
 
 def set_hf_token(token):
     """Set Hugging Face token for authentication"""
-    global hf_token_set
-    
     if not token or not token.strip():
         return "⚠️ Please enter a valid Hugging Face token"
-    
+
     try:
         login(token=token.strip(), add_to_git_credential=False)
-        hf_token_set = True
         return "✓ Hugging Face token set successfully! You can now load models."
     except Exception as e:
         return f"❌ Error setting token: {str(e)}"
 
 
-def load_model(model_size="12B", use_pipeline=True):
-    """Load the TranslateGemma model"""
-    global model, processor, pipe, current_model_size, hf_token_set
+def unload_model():
+    """Release the currently loaded model and its GPU/CPU memory"""
+    global model, processor, pipe, current_model_size
 
-    # If already loaded and same size, skip
-    if current_model_size == model_size and (pipe is not None or model is not None):
-        return f"Model {model_size} already loaded ✓"
+    model = None
+    processor = None
+    pipe = None
+    current_model_size = None
 
-    # Clear existing model
-    if model is not None:
-        del model
-        del processor
-        model = None
-        processor = None
-    if pipe is not None:
-        del pipe
-        pipe = None
-
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    
-    model_id = f"google/translategemma-{model_size.lower()}-it"
-    
-    try:
-        if use_pipeline:
-            pipe = pipeline(
-                "image-text-to-text",
-                model=model_id,
-                device="cuda" if torch.cuda.is_available() else "cpu",
-                dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
-            )
-            current_model_size = model_size
-            return f"✓ Model {model_size} loaded successfully using pipeline (CUDA: {torch.cuda.is_available()})"
-        else:
-            processor = AutoProcessor.from_pretrained(model_id)
-            model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                device_map="auto",
-                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
-            )
-            current_model_size = model_size
-            return f"✓ Model {model_size} loaded successfully (CUDA: {torch.cuda.is_available()})"
-    except Exception as e:
-        error_msg = str(e)
-        if "401" in error_msg or "authentication" in error_msg.lower():
-            return f"❌ Authentication error. Please:\n1. Enter your Hugging Face token above\n2. Accept the license at: https://huggingface.co/{model_id}"
-        return f"❌ Error loading model: {error_msg}\n\nMake sure you have accepted the license at: https://huggingface.co/{model_id}"
+
+
+def load_model(model_size="12B", use_pipeline=True):
+    """Load the TranslateGemma model"""
+    global model, processor, pipe, current_model_size
+
+    with model_lock:
+        # If already loaded and same size, skip
+        if current_model_size == model_size and (pipe is not None or model is not None):
+            return f"Model {model_size} already loaded ✓"
+
+        # Clear the existing model before pulling another one into memory
+        unload_model()
+
+        model_id = f"google/translategemma-{model_size.lower()}-it"
+
+        try:
+            if use_pipeline:
+                pipe = pipeline(
+                    "image-text-to-text",
+                    model=model_id,
+                    device="cuda" if torch.cuda.is_available() else "cpu",
+                    dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                )
+                current_model_size = model_size
+                return f"✓ Model {model_size} loaded successfully using pipeline (CUDA: {torch.cuda.is_available()})"
+            else:
+                processor = AutoProcessor.from_pretrained(model_id)
+                model = AutoModelForImageTextToText.from_pretrained(
+                    model_id,
+                    device_map="auto",
+                    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                )
+                current_model_size = model_size
+                return f"✓ Model {model_size} loaded successfully (CUDA: {torch.cuda.is_available()})"
+        except Exception as e:
+            # Leave no half-initialized model behind
+            unload_model()
+            error_msg = str(e)
+            if "401" in error_msg or "authentication" in error_msg.lower():
+                return f"❌ Authentication error. Please:\n1. Enter your Hugging Face token above\n2. Accept the license at: https://huggingface.co/{model_id}"
+            return f"❌ Error loading model: {error_msg}\n\nMake sure you have accepted the license at: https://huggingface.co/{model_id}"
+
+
+def generate(messages, max_tokens):
+    """Run generation with the loaded model (pipeline or manual) and return the text"""
+    # Gradio sliders hand back floats; GenerationConfig needs an int.
+    gen_config = GenerationConfig(max_new_tokens=int(max_tokens), pad_token_id=1)
+
+    with model_lock:
+        if pipe is None and model is None:
+            return "⚠️ Please load a model first using the 'Load Model' button"
+
+        if pipe is not None:
+            output = pipe(text=messages, generation_config=gen_config)
+            return output[0]["generated_text"][-1]["content"]
+
+        inputs = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(model.device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32)
+
+        input_len = inputs["input_ids"].shape[-1]
+
+        with torch.inference_mode():
+            generation = model.generate(**inputs, generation_config=gen_config, do_sample=False)
+            generation = generation[0][input_len:]
+            return processor.decode(generation, skip_special_tokens=True)
 
 
 def translate_text(text, source_lang, target_lang, max_tokens=200):
     """Translate text from source to target language"""
-    global pipe, model, processor
-    
     if not text or not text.strip():
         return "⚠️ Please enter text to translate"
-    
+
     if pipe is None and model is None:
         return "⚠️ Please load a model first using the 'Load Model' button"
-    
+
     source_code = LANGUAGES.get(source_lang, "en")
     target_code = LANGUAGES.get(target_lang, "es")
-    
+
     messages = [
         {
             "role": "user",
@@ -168,47 +204,27 @@ def translate_text(text, source_lang, target_lang, max_tokens=200):
             ]
         }
     ]
-    
+
     try:
-        gen_config = GenerationConfig(max_new_tokens=max_tokens, pad_token_id=1)
-        if pipe is not None:
-            output = pipe(text=messages, generation_config=gen_config)
-            return output[0]["generated_text"][-1]["content"]
-        else:
-            inputs = processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt"
-            ).to(model.device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32)
-
-            input_len = len(inputs['input_ids'][0])
-
-            with torch.inference_mode():
-                generation = model.generate(**inputs, generation_config=gen_config, do_sample=False)
-                generation = generation[0][input_len:]
-                decoded = processor.decode(generation, skip_special_tokens=True)
-
-            return decoded
+        return generate(messages, max_tokens)
     except Exception as e:
         return f"❌ Translation error: {str(e)}"
 
 
 def translate_image(image, source_lang, target_lang, max_tokens=200):
     """Extract and translate text from image"""
-    global pipe, model, processor
-    
     if image is None:
         return "⚠️ Please upload an image"
-    
+
     if pipe is None and model is None:
         return "⚠️ Please load a model first using the 'Load Model' button"
-    
+
     source_code = LANGUAGES.get(source_lang, "en")
     target_code = LANGUAGES.get(target_lang, "es")
-    
-    temp_fd, temp_path = tempfile.mkstemp(suffix=".jpg")
+
+    # PNG accepts every input mode losslessly, unlike JPEG which rejects
+    # images that carry an alpha channel (RGBA/LA/P screenshots).
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
     os.close(temp_fd)
     try:
         # Save image temporarily
@@ -216,13 +232,11 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
             # If image is a URL
             response = requests.get(image, timeout=30)
             response.raise_for_status()
-            img = Image.open(BytesIO(response.content))
-            img.save(temp_path)
-        else:
-            # If image is a PIL Image or numpy array
-            if not isinstance(image, Image.Image):
-                image = Image.fromarray(image)
-            image.save(temp_path)
+            image = Image.open(BytesIO(response.content))
+        elif not isinstance(image, Image.Image):
+            # If image is a numpy array
+            image = Image.fromarray(image)
+        image.save(temp_path, format="PNG")
 
         # Create URL-like path for the image
         messages = [
@@ -239,27 +253,7 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
             }
         ]
 
-        gen_config = GenerationConfig(max_new_tokens=max_tokens, pad_token_id=1)
-        if pipe is not None:
-            output = pipe(text=messages, generation_config=gen_config)
-            result = output[0]["generated_text"][-1]["content"]
-        else:
-            inputs = processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt"
-            ).to(model.device, dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32)
-
-            input_len = len(inputs['input_ids'][0])
-
-            with torch.inference_mode():
-                generation = model.generate(**inputs, generation_config=gen_config, do_sample=False)
-                generation = generation[0][input_len:]
-                result = processor.decode(generation, skip_special_tokens=True)
-
-        return result
+        return generate(messages, max_tokens)
     except Exception as e:
         return f"❌ Image translation error: {str(e)}"
     finally:
@@ -272,15 +266,15 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
     gr.Markdown(
         """
         # 🌍 TranslateGemma - AI Translation
-        
+
         **Google's open-source translation model supporting 55+ languages**
-        
+
         - 🔄 Text translation across 55 languages
         - 🖼️ Extract and translate text from images
         - ⚡ Powered by Gemma 3 architecture
         """
     )
-    
+
     # Hugging Face Token Section
     with gr.Accordion("🔑 Hugging Face Authentication", open=True):
         gr.Markdown(
@@ -290,7 +284,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
             2. Accept license at [huggingface.co/google/translategemma-12b-it](https://huggingface.co/google/translategemma-12b-it)
             3. Create a Read token in Settings → Access Tokens
             4. Paste your token below
-            
+
             *Skip this if you've already logged in via `huggingface-cli login`*
             """
         )
@@ -307,7 +301,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
             value="Token not set (optional if already logged in via CLI)",
             interactive=False
         )
-    
+
     # Model Loading Section
     with gr.Row():
         with gr.Column(scale=1):
@@ -323,10 +317,10 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
                 value="Set token (if needed) and click 'Load Model' to start",
                 interactive=False
             )
-    
+
     gr.Markdown("---")
-    
-    with gr.Tabs() as tabs:
+
+    with gr.Tabs():
         # Text Translation Tab
         with gr.Tab("📝 Text Translation"):
             with gr.Row():
@@ -355,7 +349,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
                         label="Max Output Tokens"
                     )
                     text_translate_btn = gr.Button("🔄 Translate", variant="primary", size="lg")
-                
+
                 with gr.Column():
                     text_output = gr.Textbox(
                         label="Translation",
@@ -363,7 +357,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
                         lines=8,
                         interactive=False
                     )
-            
+
             # Example texts
             gr.Examples(
                 examples=[
@@ -376,7 +370,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
                 inputs=[text_input, text_source_lang, text_target_lang],
                 label="Example Translations"
             )
-        
+
         # Image Translation Tab
         with gr.Tab("🖼️ Image Translation"):
             with gr.Row():
@@ -404,7 +398,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
                         label="Max Output Tokens"
                     )
                     image_translate_btn = gr.Button("🔄 Extract & Translate", variant="primary", size="lg")
-                
+
                 with gr.Column():
                     image_output = gr.Textbox(
                         label="Extracted & Translated Text",
@@ -412,59 +406,59 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
                         lines=10,
                         interactive=False
                     )
-        
+
         # About Tab
         with gr.Tab("ℹ️ About"):
             gr.Markdown(
                 """
                 ## About TranslateGemma
-                
+
                 TranslateGemma is Google's family of open-source translation models released in January 2026.
                 Built on the Gemma 3 architecture, these models deliver state-of-the-art translation quality.
-                
+
                 ### Key Features:
                 - **55 Languages**: Supports major world languages including English, Spanish, French, German, Chinese, Japanese, Arabic, Hindi, and more
-                - **3 Model Sizes**: 
+                - **3 Model Sizes**:
                   - 4B: Optimized for mobile and edge devices
                   - 12B: Balanced performance for laptops (recommended)
                   - 27B: Highest quality for cloud deployment
                 - **Multimodal**: Can extract and translate text from images
                 - **High Performance**: 26% better accuracy than base models, 30% improvement on rare language pairs
-                
+
                 ### Requirements:
                 - **GPU**: CUDA-compatible GPU recommended (CPU supported but slower)
                 - **VRAM**: 4B (~8GB), 12B (~16GB), 27B (~32GB)
                 - **Hugging Face Account**: Required to accept model license
-                
+
                 ### Resources:
                 - [Hugging Face Models](https://huggingface.co/collections/google/translategemma)
                 - [Technical Paper](https://arxiv.org/pdf/2601.09012)
                 - [Google Blog](https://blog.google/technology/ai/translategemma/)
-                
+
                 ### License:
                 Google Gemma License - Free for research and commercial use
                 """
             )
-    
+
     # Event handlers
     token_btn.click(
         fn=set_hf_token,
         inputs=[hf_token_input],
         outputs=[token_status]
     )
-    
+
     load_btn.click(
         fn=load_model,
         inputs=[model_size],
         outputs=[model_status]
     )
-    
+
     text_translate_btn.click(
         fn=translate_text,
         inputs=[text_input, text_source_lang, text_target_lang, text_max_tokens],
         outputs=[text_output]
     )
-    
+
     image_translate_btn.click(
         fn=translate_image,
         inputs=[image_input, image_source_lang, image_target_lang, image_max_tokens],
@@ -473,8 +467,8 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
 
 if __name__ == "__main__":
     demo.launch(
-        server_name="127.0.0.1",
-        server_port=7860,
+        server_name=os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1"),
+        server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
         share=False,
         show_error=True
     )
