@@ -427,7 +427,7 @@ with gr.Blocks(title="TranslateGemma - Multilingual Translation") as demo:
 
                 ### Requirements:
                 - **GPU**: CUDA-compatible GPU recommended (CPU supported but slower)
-                - **VRAM**: 4B (~8GB), 12B (~16GB), 27B (~32GB)
+                - **VRAM**: 4B (~8GB), 12B (~24GB), 27B (~54GB) at bfloat16
                 - **Hugging Face Account**: Required to accept model license
 
                 ### Resources:

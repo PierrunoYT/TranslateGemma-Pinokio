@@ -2,7 +2,7 @@
 
 Google's open-source translation model supporting 55+ languages with image text extraction capabilities.
 
-![TranslateGemma](https://img.shields.io/badge/Model-TranslateGemma-blue) ![Gradio](https://img.shields.io/badge/Gradio-5.50-orange) ![Python](https://img.shields.io/badge/Python-3.8%2B-green)
+![TranslateGemma](https://img.shields.io/badge/Model-TranslateGemma-blue) ![Gradio](https://img.shields.io/badge/Gradio-5.50-orange) ![Python](https://img.shields.io/badge/Python-3.10%2B-green)
 
 ## ✨ Features
 
@@ -16,14 +16,14 @@ Google's open-source translation model supporting 55+ languages with image text 
 
 ### Hardware
 - **GPU**: CUDA-compatible GPU recommended (optional, CPU supported)
-- **VRAM**: 
+- **VRAM** (bfloat16 weights):
   - 4B model: ~8GB
-  - 12B model: ~16GB
-  - 27B model: ~32GB
+  - 12B model: ~24GB
+  - 27B model: ~54GB
 - **RAM**: 16GB+ recommended
 
 ### Software
-- Python 3.8 or higher
+- Python 3.10 or higher (required by Gradio 5)
 - PyTorch with CUDA support (installed automatically)
 - Hugging Face account with accepted TranslateGemma license
 
@@ -39,8 +39,8 @@ Google's open-source translation model supporting 55+ languages with image text 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/TranslateGemma-Pinokio.git
-cd TranslateGemma-Pinokio
+git clone https://github.com/PierrunoYT/TranslateGemma-Pinokio.git
+cd TranslateGemma-Pinokio/app
 ```
 
 2. Create virtual environment:
@@ -52,8 +52,10 @@ source env/bin/activate  # On Windows: env\Scripts\activate
 3. Install dependencies:
 ```bash
 pip install -r requirements.txt
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 ```
+
+For a CPU-only install, swap `cu128` for `cpu`.
 
 4. Run the app:
 ```bash
@@ -120,6 +122,14 @@ And many more with regional variants (en-US, es-MX, pt-BR, etc.)!
 - **Model Size**: Choose between 4B, 12B, or 27B
 - **Max Output Tokens**: Control translation length (50-500 tokens)
 - **Device**: Automatically uses CUDA if available, falls back to CPU
+
+### Server Settings
+
+The app listens on `127.0.0.1:7860` by default. Override either with an
+environment variable before starting it:
+
+- `GRADIO_SERVER_NAME` - host to bind (e.g. `0.0.0.0` to expose on the LAN)
+- `GRADIO_SERVER_PORT` - port to bind, if 7860 is already taken
 
 ### Performance Tips
 
