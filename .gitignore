@@ -50,3 +50,9 @@ temp_image.jpg
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent / editor tooling scratch dirs
+.claude/
+.codex/
+.gemini/
+.open-edit/
