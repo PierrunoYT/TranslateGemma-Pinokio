@@ -1,4 +1,4 @@
-transformers>=4.40.0
+transformers>=4.56.0
 accelerate>=0.27.0
 gradio==5.50
 pillow>=10.0.0
