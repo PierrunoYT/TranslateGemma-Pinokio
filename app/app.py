@@ -138,7 +138,7 @@ def load_model(model_size="12B", use_pipeline=True):
                 model = AutoModelForImageTextToText.from_pretrained(
                     model_id,
                     device_map="auto",
-                    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                    dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32
                 )
                 current_model_size = model_size
                 return f"✓ Model {model_size} loaded successfully (CUDA: {torch.cuda.is_available()})"
