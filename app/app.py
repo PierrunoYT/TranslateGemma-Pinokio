@@ -1,13 +1,10 @@
 import gradio as gr
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, pipeline, GenerationConfig
-from PIL import Image
 import gc
 import os
 import tempfile
 import threading
-import requests
-from io import BytesIO
 from huggingface_hub import login
 
 # Global variables to store model and processor
@@ -227,15 +224,7 @@ def translate_image(image, source_lang, target_lang, max_tokens=200):
     temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
     os.close(temp_fd)
     try:
-        # Save image temporarily
-        if isinstance(image, str):
-            # If image is a URL
-            response = requests.get(image, timeout=30)
-            response.raise_for_status()
-            image = Image.open(BytesIO(response.content))
-        elif not isinstance(image, Image.Image):
-            # If image is a numpy array
-            image = Image.fromarray(image)
+        # Save image temporarily (gr.Image(type="pil") always hands us a PIL image)
         image.save(temp_path, format="PNG")
 
         # Create URL-like path for the image
