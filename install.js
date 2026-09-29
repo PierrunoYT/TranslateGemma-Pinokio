@@ -3,16 +3,8 @@ module.exports = {
     bundle: "ai"
   },
   run: [
-    // Install required packages for TranslateGemma
-    {
-      method: "shell.run",
-      params: {
-        venv: "env",
-        path: "app",
-        message: "uv pip install -r requirements.txt"
-      }
-    },
-    // Install PyTorch with CUDA support after other requirements
+    // Install PyTorch first so requirements (e.g. accelerate) don't pull in a
+    // default PyPI torch build that would then have to be replaced
     {
       method: "script.start",
       params: {
@@ -24,6 +16,15 @@ module.exports = {
           flashattn: false,
           triton: false
         }
+      }
+    },
+    // Install required packages for TranslateGemma
+    {
+      method: "shell.run",
+      params: {
+        venv: "env",
+        path: "app",
+        message: "uv pip install -r requirements.txt"
       }
     },
     {

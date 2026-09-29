@@ -51,8 +51,8 @@ source env/bin/activate  # On Windows: env\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install -r requirements.txt
 pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
 ```
 
 For a CPU-only install, swap `cu128` for `cpu`.
